@@ -1,0 +1,8 @@
+sharebox is a distributed FUSE filesystem for sharing files across several
+machines.
+
+features we want:
+- distributed
+- offline operations support
+- copy on write
+- several modes: on demand or always file download
