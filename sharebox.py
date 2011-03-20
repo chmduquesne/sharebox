@@ -49,10 +49,11 @@ def ignored(path):
         os.path.commonprefix([path_, '.git/']) == '.git/'):
         return True
     else:
+        ls_options = "-c -o -d -m -z --full-name --exclude-standard"
         considered = subprocess.Popen(
-                shlex.split("git ls-files -c -o -d -m --exclude-standard"),
+                shlex.split("git ls-files %s -- %s" % (ls_options, path_)),
                 stdout=subprocess.PIPE).communicate()[0].split()
-        return path[2:] not in considered
+        return path_ not in considered
 
 def annexed(path):
     """
@@ -131,12 +132,11 @@ class CopyOnWrite:
         self.opened_copies = opened_copies
         self.unlock = unlock
         self.commit = commit
-        self.ignored = ignored(path)
 
     def __enter__(self):
         if self.unlock:
             if self.opened_copies.get(self.fh, None) == None:
-                if not self.ignored:
+                if not ignored(self.path):
                     shell_do('git annex unlock %s' % self.path)
                 self.opened_copies[self.fh] = os.open(self.path,
                         os.O_WRONLY | os.O_CREAT)
@@ -145,7 +145,7 @@ class CopyOnWrite:
     def __exit__(self, type, value, traceback):
         if self.commit:
             if self.opened_copies.get(self.fh, None) != None:
-                if not self.ignored:
+                if not ignored(self.path):
                     try:
                         os.close(self.opened_copies[self.fh])
                         del self.opened_copies[self.fh]
@@ -163,6 +163,8 @@ class ShareBox(LoggingMixIn, Operations):
         self.rwlock = threading.Lock()
         self.opened_copies = {}
         with self.rwlock:
+            if os.path.realpath(os.curdir) != self.gitdir:
+                os.chdir(self.gitdir)
             if not os.path.exists('.git'):
                 shell_do('git init')
             if not os.path.exists('.git-annex'):
@@ -215,6 +217,10 @@ class ShareBox(LoggingMixIn, Operations):
         system we first try to get it. If it fails, we refuse the access.
         Since we do copy on write, we do not need to try to open in write
         mode annexed files.
+
+        FIXME: this method has too much black magic. We should just alter
+        the write permission bit when opening. I don't think it is going
+        to work with executables.
         """
         res = None
         if annexed(path):
@@ -232,6 +238,10 @@ class ShareBox(LoggingMixIn, Operations):
         When an annexed file is requested, we fake some of its attributes,
         making it look like a conventional file (of size 0 if if is not
         present on the system).
+
+        FIXME: this method has too much black magic. We should find a way
+        to show annexed files as regular and writable by altering the
+        st_mode, not by replacing it.
         """
         path_ = path
         faked_attr = {}
