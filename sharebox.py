@@ -1,20 +1,42 @@
 #!/usr/bin/env python
+"""
+Filesystem based on git-annex.
 
+Usage
+
+About git-annex: git-annex allows to keep only links to files and to keep
+their content out of git. Once a file is added to git annex, it is
+replaced by a symbolic link to the content of the file. The content of the
+file is made read-only so that you don't modify it by mistake.
+
+What does this file system:
+- It automatically adds new files to git-annex.
+- It resolves git-annex symlinks so that you see them as regular writable
+  files.
+- If the content of a file is not present on the file system, it is
+  requested on the fly from one of the replicated copies.
+- When you access a file, it does copy on write: if you don't modify it,
+  you read the git-annex copy. However, if you change it, the copy is
+  unlocked on the fly and commited to git-annex when closed. Depending on
+  the mount option, the previous copy can be kept in git-annex.
+- It pulls at regular intervals the other replicated copies and launches a
+  merge program if there are conflicts.
+"""
 from __future__ import with_statement
 
 from errno import EACCES
-from os.path import realpath
-from sys import argv, exit
 import threading
 
 import os
+import os.path
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 
 import shlex
 import subprocess
-import logging
 import time
+import sys
+import getopt
 
 def ignored(path):
     """
@@ -45,7 +67,6 @@ def shell_do(cmd):
     """
     calls the given shell command
     """
-    logging.debug(cmd)
     p = subprocess.Popen(shlex.split(cmd))
     p.wait()
 
@@ -71,7 +92,6 @@ class AnnexUnlock:
     def __exit__(self, type, value, traceback):
         if not self.ignored:
             shell_do('git annex add %s' % self.path)
-            shell_do('chmod +w %s' % os.readlink(self.path))
             shell_do('git commit -m "changed %s"' % self.path)
 
 class CopyOnWrite:
@@ -118,27 +138,28 @@ class CopyOnWrite:
             if self.opened_copies.get(self.fh, None) == None:
                 if not self.ignored:
                     shell_do('git annex unlock %s' % self.path)
-                    self.opened_copies[self.fh] = os.open(self.path,
-                            os.O_WRONLY | os.O_CREAT)
+                self.opened_copies[self.fh] = os.open(self.path,
+                        os.O_WRONLY | os.O_CREAT)
         return self.opened_copies.get(self.fh, self.fh)
 
     def __exit__(self, type, value, traceback):
         if self.commit:
-            if not self.ignored:
-                try:
-                    os.close(self.opened_copies[self.fh])
-                    del self.opened_copies[self.fh]
-                except KeyError:
-                    pass
-                shell_do('git annex add %s' % self.path)
-                shell_do('chmod +w %s' % os.readlink(self.path))
-                shell_do('git commit -m "changed %s"' % self.path)
+            if self.opened_copies.get(self.fh, None) != None:
+                if not self.ignored:
+                    try:
+                        os.close(self.opened_copies[self.fh])
+                        del self.opened_copies[self.fh]
+                    except KeyError:
+                        pass
+                    shell_do('git annex add %s' % self.path)
+                    shell_do('git commit -m "changed %s"' % self.path)
 
 class ShareBox(LoggingMixIn, Operations):
     """
     Assumes operating from the root of the managed git directory
     """
-    def __init__(self):
+    def __init__(self, gitdir):
+        self.gitdir = gitdir
         self.rwlock = threading.Lock()
         self.opened_copies = {}
         with self.rwlock:
@@ -153,6 +174,8 @@ class ShareBox(LoggingMixIn, Operations):
         """
         redirects self.op('/foo', ...) to self.op('./foo', ...)
         """
+        if os.path.realpath(os.curdir) != self.gitdir:
+            os.chdir(self.gitdir)
         return super(ShareBox, self).__call__(op, "." + path, *args)
 
     getxattr = None
@@ -160,9 +183,14 @@ class ShareBox(LoggingMixIn, Operations):
     link = os.link
     mknod = os.mknod
     mkdir = os.mkdir
-    open = os.open
     readlink = os.readlink
     rmdir = os.rmdir
+
+    def statfs(self, path):
+        stv = os.statvfs(path)
+        return dict((key, getattr(stv, key)) for key in ('f_bavail',
+            'f_bfree', 'f_blocks', 'f_bsize', 'f_favail', 'f_ffree',
+            'f_files', 'f_flag', 'f_frsize', 'f_namemax'))
 
     def create(self, path, mode):
         return os.open(path, os.O_WRONLY | os.O_CREAT, mode)
@@ -174,32 +202,52 @@ class ShareBox(LoggingMixIn, Operations):
         return ['.', '..'] + os.listdir(path)
 
     def access(self, path, mode):
-        if not os.access(path, mode):
-            raise FuseOSError(EACCES)
+        if annexed(path):
+            if not os.path.exists(path):
+                raise FuseOSError(EACCES)
+        else:
+            if not os.access(path, mode):
+                raise FuseOSError(EACCES)
+
+    def open(self, path, flags):
+        """
+        When an annexed file is requested, if it is not present on the
+        system we first try to get it. If it fails, we refuse the access.
+        Since we do copy on write, we do not need to try to open in write
+        mode annexed files.
+        """
+        res = None
+        if annexed(path):
+            if not os.path.exists(path):
+                shell_do('git annex get %s' % path)
+            if not os.path.exists(path):
+                raise FuseOSError(EACCES)
+            res = os.open(path, 32768) # magic to open read only
+        else:
+            res = os.open(path, flags)
+        return res
 
     def getattr(self, path, fh=None):
         """
-        symlinks to annexed files are dereferenced
+        When an annexed file is requested, we fake some of its attributes,
+        making it look like a conventional file (of size 0 if if is not
+        present on the system).
         """
         path_ = path
-        if annexed(path) and os.path.exists(path):
-            path_ = os.readlink(path)
+        faked_attr = {}
+        if annexed(path):
+            faked_attr ['st_mode'] = 33188 # we fake a 644 regular file
+            if os.path.exists(path):
+                path_ = os.readlink(path)
+            else:
+                faked_attr ['st_size'] = 0
         st = os.lstat(path_)
-        return dict((key, getattr(st, key)) for key in ('st_atime',
-            'st_ctime', 'st_gid', 'st_mode', 'st_mtime', 'st_nlink',
-            'st_size', 'st_uid'))
-
-    def statfs(self, path):
-        """
-        symlinks to annexed files are dereferenced
-        """
-        path_ = path
-        if annexed(path) and os.path.exists(path):
-            path_ = os.readlink(path)
-        stv = os.statvfs(path_)
-        return dict((key, getattr(stv, key)) for key in ('f_bavail',
-            'f_bfree', 'f_blocks', 'f_bsize', 'f_favail', 'f_ffree',
-            'f_files', 'f_flag', 'f_frsize', 'f_namemax'))
+        res = dict((key, getattr(st, key)) for key in ('st_atime',
+            'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
+            'st_nlink', 'st_size', 'st_uid'))
+        for attr, value in faked_attr.items():
+            res [attr] = value
+        return res
 
     def chmod(self, path, mode):
         with self.rwlock:
@@ -253,8 +301,8 @@ class ShareBox(LoggingMixIn, Operations):
                 os.close(fh)
 
     def rename(self, old, new):
-        # Make sure to lock the file (and to annex it if it was not)
         with self.rwlock:
+            # Make sure to lock the file (and to annex it if it was not)
             if not ignored(old):
                 shell_do('git annex add %s' % old)
             os.rename(old, '.' + new)
@@ -292,19 +340,54 @@ def synchronize():
     """
     i = 0
     while 1:
-        logging.debug("synchronizing %s" % i)
         time.sleep(1)
         i += 1
 
 if __name__ == "__main__":
-    if len(argv) != 3:
-        print 'usage: %s <gitdir> <mountpoint>' % argv[0]
-        exit(1)
-    logging.basicConfig(filename="sharebox.log", level=logging.DEBUG)
-    t = threading.Thread(target=synchronize)
-    t.daemon = True
-    #t.start()
-    mountpoint = realpath(argv[2])
-    gitdir = realpath(argv[1])
-    os.chdir(gitdir)
-    fuse = FUSE(ShareBox(), mountpoint, foreground=True)
+    try:
+        opts, args = getopt.gnu_getopt(sys.argv[1:], "ho:", ["help"])
+    except getopt.GetoptError, err:
+        print str(err)
+        print 'usage: %s <mountpoint> [-o <option>]' % sys.argv[0]
+        sys.exit(1)
+
+    gitdir = None
+    logfile = 'sharebox.log'
+    foreground = False
+    sync = 0
+
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            print 'usage: %s <mountpoint> [-o <option>]' % sys.argv[0]
+            sys.exit(0)
+        if opt == "-o":
+            if '=' in arg:
+                option = arg.split('=')[0]
+                value = arg.replace( option + '=', '', 1)
+                if option == 'gitdir':
+                    gitdir = value
+                if option == 'logfile':
+                    logfile = value
+                if option == 'sync':
+                    sync = value
+            else:
+                if arg == 'foreground':
+                    foreground=True
+
+    if not gitdir:
+        print 'missing the gitdir option'
+        sys.exit(1)
+
+    mountpoint = "".join(args)
+    if mountpoint == "":
+        print 'invalid mountpoint'
+        sys.exit(1)
+
+    if sync:
+        t = threading.Thread(target=synchronize)
+        t.daemon = True
+        t.start()
+
+    mountpoint = os.path.realpath(mountpoint)
+    gitdir = os.path.realpath(gitdir)
+    fuse = FUSE(ShareBox(gitdir), mountpoint, foreground=foreground)
