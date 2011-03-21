@@ -43,16 +43,22 @@ def ignored(path):
     Returns true if we should ignore this file, false otherwise. This
     should respect the different ways for git to ignore a file.
     """
-    path_ = path[:2]
+    path_ = path[2:]
     # Exception: files that are versionned by git but that we want to ignore
     if (os.path.commonprefix([path_, '.git-annex/']) == '.git-annex/' or
         os.path.commonprefix([path_, '.git/']) == '.git/'):
         return True
     else:
-        ls_options = "-c -o -d -m -z --full-name --exclude-standard"
+        ls_options = "-c -o -d -m --full-name --exclude-standard"
         considered = subprocess.Popen(
-                shlex.split("git ls-files %s -- %s" % (ls_options, path_)),
-                stdout=subprocess.PIPE).communicate()[0].split()
+                shlex.split('git ls-files %s -- "%s"' % (ls_options, path_)),
+                stdout=subprocess.PIPE).communicate()[0].split('\n')
+        if path_ not in considered:
+            print '%s is ignored' % path_
+            print considered
+        else:
+            print '%s is considered' % path_
+            print considered
         return path_ not in considered
 
 def annexed(path):
@@ -60,14 +66,13 @@ def annexed(path):
     returns True if the file is annexed, false otherwise
     """
     return (os.path.islink(path) and
-            os.path.commonprefix([
-                os.readlink(path),
-                '.git/annex/objects']) == '.git/annex/objects')
+            os.readlink(path).count('.git/annex/objects'))
 
 def shell_do(cmd):
     """
     calls the given shell command
     """
+    print cmd
     p = subprocess.Popen(shlex.split(cmd))
     p.wait()
 
@@ -88,11 +93,11 @@ class AnnexUnlock:
 
     def __enter__(self):
         if not self.ignored:
-            shell_do('git annex unlock %s' % self.path)
+            shell_do('git annex unlock "%s"' % self.path)
 
     def __exit__(self, type, value, traceback):
         if not self.ignored:
-            shell_do('git annex add %s' % self.path)
+            shell_do('git annex add "%s"' % self.path)
             shell_do('git commit -m "changed %s"' % self.path)
 
 class CopyOnWrite:
@@ -137,7 +142,7 @@ class CopyOnWrite:
         if self.unlock:
             if self.opened_copies.get(self.fh, None) == None:
                 if not ignored(self.path):
-                    shell_do('git annex unlock %s' % self.path)
+                    shell_do('git annex unlock "%s"' % self.path)
                 self.opened_copies[self.fh] = os.open(self.path,
                         os.O_WRONLY | os.O_CREAT)
         return self.opened_copies.get(self.fh, self.fh)
@@ -151,7 +156,7 @@ class CopyOnWrite:
                         del self.opened_copies[self.fh]
                     except KeyError:
                         pass
-                    shell_do('git annex add %s' % self.path)
+                    shell_do('git annex add "%s"' % self.path)
                     shell_do('git commit -m "changed %s"' % self.path)
 
 class ShareBox(LoggingMixIn, Operations):
@@ -195,7 +200,11 @@ class ShareBox(LoggingMixIn, Operations):
             'f_files', 'f_flag', 'f_frsize', 'f_namemax'))
 
     def create(self, path, mode):
-        return os.open(path, os.O_WRONLY | os.O_CREAT, mode)
+        with self.rwlock:
+            fh = os.open(path, os.O_WRONLY | os.O_CREAT, mode)
+            with CopyOnWrite(path, fh, self.opened_copies, unlock=True,
+                    commit=False):
+                return fh
 
     def utimens(self, path, times):
         os.utime(path, times)
@@ -225,7 +234,7 @@ class ShareBox(LoggingMixIn, Operations):
         res = None
         if annexed(path):
             if not os.path.exists(path):
-                shell_do('git annex get %s' % path)
+                shell_do('git annex get "%s"' % path)
             if not os.path.exists(path):
                 raise FuseOSError(EACCES)
             res = os.open(path, 32768) # magic to open read only
@@ -248,7 +257,8 @@ class ShareBox(LoggingMixIn, Operations):
         if annexed(path):
             faked_attr ['st_mode'] = 33188 # we fake a 644 regular file
             if os.path.exists(path):
-                path_ = os.readlink(path)
+                base = os.path.dirname(path_)
+                path_ = os.path.join(base, os.readlink(path))
             else:
                 faked_attr ['st_size'] = 0
         st = os.lstat(path_)
@@ -314,17 +324,17 @@ class ShareBox(LoggingMixIn, Operations):
         with self.rwlock:
             # Make sure to lock the file (and to annex it if it was not)
             if not ignored(old):
-                shell_do('git annex add %s' % old)
+                shell_do('git annex add "%s"' % old)
             os.rename(old, '.' + new)
             if ignored(old) or ignored('.' + new):
                 if not ignored(old):
-                    shell_do('git rm %s' % old)
+                    shell_do('git rm "%s"' % old)
                     shell_do('git commit -m "moved %s to ignored file"' % old)
                 if not ignored('.' + new):
-                    shell_do('git annex add %s' % new)
+                    shell_do('git annex add "%s"' % new)
                     shell_do('git commit -m "moved an ignored file to %s"' % new)
             else:
-                shell_do('git mv %s %s' % (old, '.' + new))
+                shell_do('git mv "%s" "%s"' % (old, '.' + new))
                 shell_do('git commit -m "moved %s to .%s"' % (old, new))
 
 
@@ -332,7 +342,7 @@ class ShareBox(LoggingMixIn, Operations):
         with self.rwlock:
             os.symlink(source, target)
             if not ignored(target):
-                shell_do('git annex add %s' % target)
+                shell_do('git annex add "%s"' % target)
                 shell_do('git commit -m "created symlink %s -> %s"' %(target,
                     source) )
 
@@ -340,9 +350,8 @@ class ShareBox(LoggingMixIn, Operations):
         with self.rwlock:
             os.unlink(path)
             if not ignored(path):
-                shell_do('git rm %s' % path)
+                shell_do('git rm "%s"' % path)
                 shell_do('git commit -m "removed %s"' % path)
-
 
 def synchronize():
     """
