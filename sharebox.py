@@ -75,6 +75,7 @@ def shell_do(cmd):
     print cmd
     p = subprocess.Popen(shlex.split(cmd))
     p.wait()
+    return not p.returncode # will return True if everything ok
 
 class AnnexUnlock:
     """
@@ -353,31 +354,47 @@ class ShareBox(LoggingMixIn, Operations):
                 shell_do('git rm "%s"' % path)
                 shell_do('git commit -m "removed %s"' % path)
 
-def synchronize():
+def synchronize(sharebox, sync_interval):
     """
     Place to introduce the synchonization daemon
     """
-    i = 0
+    print 'thread started'
     while 1:
-        time.sleep(1)
-        i += 1
+        time.sleep(float(sync_interval))
+        print 'synchronizing...'
+        os.chdir(sharebox.gitdir)
+        shell_do('git fetch --all')
+        repos = subprocess.Popen(
+                shlex.split('git remote show'),
+                stdout=subprocess.PIPE).communicate()[0].strip().split('\n')
+        for remote in repos:
+            if remote:
+                with sharebox.rwlock:
+                    if not shell_do('git merge %s/master' % remote):
+                        shell_do('git reset --hard')
+                        notify()
+def notify():
+    """
+    Notify the user that their is a conflict
+    """
+    pass
+
 
 if __name__ == "__main__":
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], "ho:", ["help"])
     except getopt.GetoptError, err:
         print str(err)
-        print 'usage: %s <mountpoint> [-o <option>]' % sys.argv[0]
+        print __doc__
         sys.exit(1)
 
     gitdir = None
-    logfile = 'sharebox.log'
     foreground = False
     sync = 0
 
     for opt, arg in opts:
         if opt in ("-h", "--help"):
-            print 'usage: %s <mountpoint> [-o <option>]' % sys.argv[0]
+            print __doc__
             sys.exit(0)
         if opt == "-o":
             if '=' in arg:
@@ -385,8 +402,6 @@ if __name__ == "__main__":
                 value = arg.replace( option + '=', '', 1)
                 if option == 'gitdir':
                     gitdir = value
-                if option == 'logfile':
-                    logfile = value
                 if option == 'sync':
                     sync = value
             else:
@@ -402,11 +417,13 @@ if __name__ == "__main__":
         print 'invalid mountpoint'
         sys.exit(1)
 
+    mountpoint = os.path.realpath(mountpoint)
+    gitdir = os.path.realpath(gitdir)
+    sharebox = ShareBox(gitdir)
+
     if sync:
-        t = threading.Thread(target=synchronize)
+        t = threading.Thread(target=synchronize, args=(sharebox, sync))
         t.daemon = True
         t.start()
 
-    mountpoint = os.path.realpath(mountpoint)
-    gitdir = os.path.realpath(gitdir)
-    fuse = FUSE(ShareBox(gitdir), mountpoint, foreground=foreground)
+    fuse = FUSE(sharebox, mountpoint, foreground=foreground)

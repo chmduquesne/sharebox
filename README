@@ -1,8 +1,24 @@
 sharebox is a distributed FUSE filesystem for sharing files across several
-machines.
+machines. It supports disconnected operations: you can go offline and
+modify a file: the modifications will be propagated when you'll be back.
+If several hosts modify the same file, an interactive conflict handler is
+spawned on the hosts (but only one host needs to resolve the conflict). Of
+course, builtin automatic versionning is provided, with a configurable
+number of versions. It is also space-efficient: files appear as present on
+the system but are actually dowloaded from peers ondemand. You can also
+control where your data lives with a set of commands.
 
-features we want:
-- distributed
-- offline operations support
+Features:
+- fully distributed
+- offline operations
 - copy on write
-- several modes: on demand or always file download
+- builtin versionning
+- interactive conflicts handling
+
+An important detail: sharebox is nothing more than a very simple
+filesystem layer around the wonderful git-annex, which actually does all
+the work. You can thank its creator for being a genius.
+
+== Howto ==
+
+Here is the output of sharebox --help:
