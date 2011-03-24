@@ -182,8 +182,7 @@ class ShareBox(LoggingMixIn, Operations):
         """
         redirects self.op('/foo', ...) to self.op('./foo', ...)
         """
-        if os.path.realpath(os.curdir) != self.gitdir:
-            os.chdir(self.gitdir)
+        os.chdir(self.gitdir)
         return super(ShareBox, self).__call__(op, "." + path, *args)
 
     getxattr = None
@@ -373,10 +372,15 @@ def synchronize(sharebox, sync_interval):
                     if not shell_do('git merge %s/master' % remote):
                         shell_do('git reset --hard')
                         notify()
+                    else:
+                        shell_do('git commit -m "merged with %s"' % remote)
 def notify():
     """
     Notify the user that their is a conflict
     """
+    pass
+
+def merge_manually():
     pass
 
 
