@@ -1,26 +1,22 @@
 #!/usr/bin/env python
 """
-Filesystem based on git-annex.
+Distributed mirroring filesystem based on git-annex.
 
-Usage
+Usage:
 
-About git-annex: git-annex allows to keep only links to files and to keep
-their content out of git. Once a file is added to git annex, it is
-replaced by a symbolic link to the content of the file. The content of the
-file is made read-only so that you don't modify it by mistake.
+sharebox <mountpoint> [-o <option>]
 
-What does this file system:
-- It automatically adds new files to git-annex.
-- It resolves git-annex symlinks so that you see them as regular writable
-  files.
-- If the content of a file is not present on the file system, it is
-  requested on the fly from one of the replicated copies.
-- When you access a file, it does copy on write: if you don't modify it,
-  you read the git-annex copy. However, if you change it, the copy is
-  unlocked on the fly and commited to git-annex when closed. Depending on
-  the mount option, the previous copy can be kept in git-annex.
-- It pulls at regular intervals the other replicated copies and launches a
-  merge program if there are conflicts.
+Options:
+    -o gitdir=<path>            mandatory: path to the git directory to
+                                actually store the files in.
+    -o sync=<seconds>           interval to wait between syncronisations.
+                                Any number <=0 means "never" (default 0).
+    -o numversions=<number>     number of different versions of the same
+                                file to keep. Any number <=0 means "keep
+                                everything" (default 0).
+    -o getall                   when there are modifications on a remote,
+                                download the content of files.
+    -o foreground               debug mode.
 """
 from __future__ import with_statement
 
@@ -163,6 +159,25 @@ class CopyOnWrite:
 class ShareBox(LoggingMixIn, Operations):
     """
     Assumes operating from the root of the managed git directory
+
+    About git-annex: git-annex allows to keep only links to files and to
+    keep their content out of git. Once a file is added to git annex, it
+    is replaced by a symbolic link to the content of the file. The content
+    of the file is made read-only so that you don't modify it by mistake.
+
+    What does this file system:
+    - It automatically adds new files to git-annex.
+    - It resolves git-annex symlinks so that you see them as regular
+      writable files.
+    - If the content of a file is not present on the file system, it is
+      requested on the fly from one of the replicated copies.
+    - When you access a file, it does copy on write: if you don't modify
+      it, you read the git-annex copy. However, if you change it, the copy
+      is unlocked on the fly and commited to git-annex when closed.
+      Depending on the mount option, the previous copy can be kept in
+      git-annex.
+    - It pulls at regular intervals the other replicated copies and
+      launches a merge program if there are conflicts.
     """
     def __init__(self, gitdir):
         self.gitdir = gitdir
@@ -182,7 +197,8 @@ class ShareBox(LoggingMixIn, Operations):
         """
         redirects self.op('/foo', ...) to self.op('./foo', ...)
         """
-        os.chdir(self.gitdir)
+        os.chdir(self.gitdir) # when foreground is not set, the working
+                              # directory changes unexplainably
         return super(ShareBox, self).__call__(op, "." + path, *args)
 
     getxattr = None
@@ -395,6 +411,7 @@ if __name__ == "__main__":
     gitdir = None
     foreground = False
     sync = 0
+    numversions = 0
 
     for opt, arg in opts:
         if opt in ("-h", "--help"):
@@ -407,7 +424,9 @@ if __name__ == "__main__":
                 if option == 'gitdir':
                     gitdir = value
                 if option == 'sync':
-                    sync = value
+                    sync = int(value)
+                if option == 'numversions'
+                    numversions = int(value)
             else:
                 if arg == 'foreground':
                     foreground=True

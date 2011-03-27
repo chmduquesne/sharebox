@@ -22,3 +22,57 @@ the work. You can thank its creator for being a genius.
 == Howto ==
 
 Here is the output of sharebox --help:
+
+sharebox <mountpoint> [-o <option>]
+
+Options:
+    -o gitdir=<path>            mandatory: path to the git directory to
+                                actually store the files in.
+    -o sync=<seconds>           interval to wait between syncronisations.
+                                Any number <=0 means "never" (default 0).
+    -o numversions=<number>     number of different versions of the same
+                                file to keep. Any number <=0 means "keep
+                                everything" (default 0).
+    -o getall                   when there are modifications on a remote,
+                                download the content of files.
+    -o foreground               debug mode.
+
+Adding a mirror:
+
+Go to the local git directory and add the remote git directory as a mirror
+to pull from:
+
+git remote add <name> <url>
+
+== State of the project ==
+
+sharebox is at the very early stage. Even the author still does not use it
+as a working solution.
+
+What is implemented right now:
+- The default state for files is to be commited to git-annex: their
+  content is not versionned, only links to their content.
+- They are presented by the file system as regular files, resolved by
+  reading the links. If they are not present on the system, they are seen
+  as empty files.
+- When a file not present on the system is accessed (with the open()
+  system call) 'git annex get' is used to get the content of the file (If
+  it is not possible to get the file, there is an access error).
+- Copy on write is used: When you open a file, you open the read-only file
+  linked by git-annex (even if you tried to open it with write access). If
+  you do not modify the file, nothing happens, but if you do, the file is
+  'git annex unlock'-ed (It then occupies twice the necessary space) and
+  the result is commited to git when the file is closed.
+
+What is implemented, but does not work very well:
+- There is a mount option for specifying a synchronisation interval. This
+  is not working well yet.
+
+What is not implemented:
+- Documentation.
+- Conflicts are not handled yet.
+- The number of copies kept for the same file is not setable yet, but it
+  should become a mount option.
+- A good test suite.
+
+
