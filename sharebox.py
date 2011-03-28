@@ -33,6 +33,7 @@ import subprocess
 import time
 import sys
 import getopt
+import time
 
 def ignored(path):
     """
@@ -226,15 +227,27 @@ class ShareBox(LoggingMixIn, Operations):
         os.utime(path, times)
 
     def readdir(self, path, fh):
-        return ['.', '..'] + os.listdir(path)
+        """
+        We have a special directory in the root to communicate with
+        sharebox.
+        """
+        if path == './':
+            return ['.', '..', '.sharebox'] + os.listdir(path)
+        if path == './.sharebox':
+            return ['.', '..', 'state', 'command']
+        else:
+            return ['.', '..'] + os.listdir(path)
 
     def access(self, path, mode):
-        if annexed(path):
-            if not os.path.exists(path):
-                raise FuseOSError(EACCES)
-        else:
-            if not os.access(path, mode):
-                raise FuseOSError(EACCES)
+        if not (path == './.sharebox' or
+                path == './.sharebox/state' or
+                path == './.sharebox/command'):
+            if annexed(path):
+                if not os.path.exists(path):
+                    raise FuseOSError(EACCES)
+            else:
+                if not os.access(path, mode):
+                    raise FuseOSError(EACCES)
 
     def open(self, path, flags):
         """
@@ -247,6 +260,8 @@ class ShareBox(LoggingMixIn, Operations):
         the write permission bit when opening. I don't think it is going
         to work with executables.
         """
+        if path == './.sharebox/state' or path == './.sharebox/command':
+            return os.open('/dev/null', flags)
         res = None
         if annexed(path):
             if not os.path.exists(path):
@@ -268,6 +283,21 @@ class ShareBox(LoggingMixIn, Operations):
         to show annexed files as regular and writable by altering the
         st_mode, not by replacing it.
         """
+        if path == './.sharebox':
+            return {'st_ctime': time.time(), 'st_mtime': time.time(),
+                    'st_nlink': 2, 'st_mode': 16877, 'st_size': 4096,
+                    'st_gid': 1000, 'st_uid': 1000, 'st_atime':
+                    time.time()}
+        if path == './.sharebox/state':
+            return {'st_ctime': time.time(), 'st_mtime': time.time(),
+                    'st_nlink': 1, 'st_mode': 33060, 'st_size': 0,
+                    'st_gid': 1000, 'st_uid': 1000, 'st_atime':
+                    time.time()}
+        if path == './.sharebox/command':
+            return {'st_ctime': time.time(), 'st_mtime': time.time(),
+                    'st_nlink': 1, 'st_mode': 32914, 'st_size': 0,
+                    'st_gid': 1000, 'st_uid': 1000, 'st_atime':
+                    time.time()}
         path_ = path
         faked_attr = {}
         if annexed(path):
@@ -286,34 +316,46 @@ class ShareBox(LoggingMixIn, Operations):
         return res
 
     def chmod(self, path, mode):
-        with self.rwlock:
-            with AnnexUnlock(path):
-                os.chmod(path, mode)
+        if not (path == './.sharebox/state' or
+                path == './.sharebox/command'):
+            with self.rwlock:
+                with AnnexUnlock(path):
+                    os.chmod(path, mode)
 
     def chown(self, path, user, group):
-        with self.rwlock:
-            with AnnexUnlock(path):
-                os.chown(path, user, group)
+        if not (path == './.sharebox/state' or
+                path == './.sharebox/command'):
+            with self.rwlock:
+                with AnnexUnlock(path):
+                    os.chown(path, user, group)
 
     def truncate(self, path, length, fh=None):
-        with self.rwlock:
-            with AnnexUnlock(path):
-                with open(path, 'r+') as f:
-                    f.truncate(length)
+        if not (path == './.sharebox/state' or
+                path == './.sharebox/command'):
+            with self.rwlock:
+                with AnnexUnlock(path):
+                    with open(path, 'r+') as f:
+                        f.truncate(length)
 
     def flush(self, path, fh):
-        with self.rwlock:
-            with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
-                    commit=False) as fh_:
-                os.fsync(fh_)
+        if not (path == './.sharebox/state' or
+                path == './.sharebox/command'):
+            with self.rwlock:
+                with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
+                        commit=False) as fh_:
+                    os.fsync(fh_)
 
     def fsync(self, path, datasync, fh):
-        with self.rwlock:
-            with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
-                    commit=False) as fh_:
-                os.fsync(fh_)
+        if not (path == './.sharebox/state' or
+                path == './.sharebox/command'):
+            with self.rwlock:
+                with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
+                        commit=False) as fh_:
+                    os.fsync(fh_)
 
     def read(self, path, size, offset, fh):
+        if path == './.sharebox/state':
+            return 'test\n'
         with self.rwlock:
             with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
                     commit=False) as fh_:
@@ -321,11 +363,13 @@ class ShareBox(LoggingMixIn, Operations):
                 return os.read(fh_, size)
 
     def write(self, path, data, offset, fh):
+        if path == './.sharebox/command':
+            pass
         with self.rwlock:
             with CopyOnWrite(path, fh, self.opened_copies, unlock=True,
                     commit=False) as fh_:
                 os.lseek(fh_, offset, 0)
-                return os.write(fh_, data)
+                os.write(fh_, data)
 
     def release(self, path, fh):
         """
