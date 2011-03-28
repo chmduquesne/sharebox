@@ -160,14 +160,14 @@ class ShareBox(LoggingMixIn, Operations):
     """
     Assumes operating from the root of the managed git directory
 
-    About git-annex: git-annex allows to keep only links to files and to
-    keep their content out of git. Once a file is added to git annex, it
-    is replaced by a symbolic link to the content of the file. The content
-    of the file is made read-only so that you don't modify it by mistake.
+    git-annex allows to version only links to files and to keep their
+    content out of git. Once a file is added to git annex, it is replaced
+    by a symbolic link to the content of the file. The content of the file
+    is made read-only by git-annex so that we don't modify it by mistake.
 
     What does this file system:
     - It automatically adds new files to git-annex.
-    - It resolves git-annex symlinks so that you see them as regular
+    - It resolves git-annex symlinks so that we see them as regular
       writable files.
     - If the content of a file is not present on the file system, it is
       requested on the fly from one of the replicated copies.
@@ -373,7 +373,6 @@ def synchronize(sharebox, sync_interval):
     """
     Place to introduce the synchonization daemon
     """
-    print 'thread started'
     while 1:
         time.sleep(float(sync_interval))
         print 'synchronizing...'
@@ -383,13 +382,12 @@ def synchronize(sharebox, sync_interval):
                 shlex.split('git remote show'),
                 stdout=subprocess.PIPE).communicate()[0].strip().split('\n')
         for remote in repos:
-            if remote:
-                with sharebox.rwlock:
-                    if not shell_do('git merge %s/master' % remote):
-                        shell_do('git reset --hard')
-                        notify()
-                    else:
-                        shell_do('git commit -m "merged with %s"' % remote)
+            with sharebox.rwlock:
+                if not shell_do('git merge %s/master' % remote):
+                    shell_do('git reset --hard')
+                    notify()
+                else:
+                    shell_do('git commit -m "merged with %s"' % remote)
 def notify():
     """
     Notify the user that their is a conflict
@@ -398,7 +396,6 @@ def notify():
 
 def merge_manually():
     pass
-
 
 if __name__ == "__main__":
     try:
@@ -425,7 +422,7 @@ if __name__ == "__main__":
                     gitdir = value
                 if option == 'sync':
                     sync = int(value)
-                if option == 'numversions'
+                if option == 'numversions':
                     numversions = int(value)
             else:
                 if arg == 'foreground':
