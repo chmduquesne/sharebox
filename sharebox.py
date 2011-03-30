@@ -46,7 +46,7 @@ def ignored(path):
     if (path_ == '.git-attributes' or
             path_.startswith('.git/') or
             path_.startswith('.git-annex/') or
-            path_ == '.commands'):
+            path_ == '.command'):
         return True
     else:
         ls_options = "-c -o -d -m --full-name --exclude-standard"
