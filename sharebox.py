@@ -41,21 +41,18 @@ def ignored(path):
     should respect the different ways for git to ignore a file.
     """
     path_ = path[2:]
-    # Exception: files that are versionned by git but that we want to ignore
-    if (os.path.commonprefix([path_, '.git-annex/']) == '.git-annex/' or
-        os.path.commonprefix([path_, '.git/']) == '.git/'):
+    # Exception: files that are versionned by git but that we want to
+    # ignore, and special sharebox directory.
+    if (path_ == '.git-attributes' or
+            path_.startswith('.git/') or
+            path_.startswith('.git-annex/') or
+            path_ == '.commands'):
         return True
     else:
         ls_options = "-c -o -d -m --full-name --exclude-standard"
         considered = subprocess.Popen(
                 shlex.split('git ls-files %s -- "%s"' % (ls_options, path_)),
-                stdout=subprocess.PIPE).communicate()[0].split('\n')
-        if path_ not in considered:
-            print '%s is ignored' % path_
-            print considered
-        else:
-            print '%s is considered' % path_
-            print considered
+                stdout=subprocess.PIPE).communicate()[0].strip().split('\n')
         return path_ not in considered
 
 def annexed(path):
@@ -87,14 +84,14 @@ class AnnexUnlock:
     """
     def __init__(self, path):
         self.path = path
-        self.ignored = ignored(path)
+        self.annexed = annexed(path)
 
     def __enter__(self):
-        if not self.ignored:
+        if self.annexed:
             shell_do('git annex unlock "%s"' % self.path)
 
     def __exit__(self, type, value, traceback):
-        if not self.ignored:
+        if self.annexed:
             shell_do('git annex add "%s"' % self.path)
             shell_do('git commit -m "changed %s"' % self.path)
 
@@ -139,7 +136,7 @@ class CopyOnWrite:
     def __enter__(self):
         if self.unlock:
             if self.opened_copies.get(self.fh, None) == None:
-                if not ignored(self.path):
+                if annexed(self.path):
                     shell_do('git annex unlock "%s"' % self.path)
                 self.opened_copies[self.fh] = os.open(self.path,
                         os.O_WRONLY | os.O_CREAT)
@@ -148,14 +145,14 @@ class CopyOnWrite:
     def __exit__(self, type, value, traceback):
         if self.commit:
             if self.opened_copies.get(self.fh, None) != None:
-                if not ignored(self.path):
-                    try:
-                        os.close(self.opened_copies[self.fh])
-                        del self.opened_copies[self.fh]
-                    except KeyError:
-                        pass
-                    shell_do('git annex add "%s"' % self.path)
-                    shell_do('git commit -m "changed %s"' % self.path)
+                try:
+                    os.close(self.opened_copies[self.fh])
+                    del self.opened_copies[self.fh]
+                except KeyError:
+                    pass
+            if not ignored(self.path):
+                shell_do('git annex add "%s"' % self.path)
+                shell_do('git commit -m "changed %s"' % self.path)
 
 class ShareBox(LoggingMixIn, Operations):
     """
@@ -180,8 +177,15 @@ class ShareBox(LoggingMixIn, Operations):
     - It pulls at regular intervals the other replicated copies and
       launches a merge program if there are conflicts.
     """
-    def __init__(self, gitdir):
+    def __init__(self, gitdir, mountpoint, sync_interval, numversions):
+        """
+        Calls 'git init' and 'git annex init' on the storage directory if
+        necessary.
+        """
         self.gitdir = gitdir
+        self.mountpoint = mountpoint
+        self.sync_interval = sync_interval
+        self.numversions = numversions
         self.rwlock = threading.Lock()
         self.opened_copies = {}
         with self.rwlock:
@@ -198,14 +202,14 @@ class ShareBox(LoggingMixIn, Operations):
         """
         redirects self.op('/foo', ...) to self.op('./foo', ...)
         """
-        os.chdir(self.gitdir) # when foreground is not set, the working
-                              # directory changes unexplainably
+        os.chdir(self.gitdir)   # when foreground is not set, the working
+                                # directory changes unexplainably
         return super(ShareBox, self).__call__(op, "." + path, *args)
 
     getxattr = None
     listxattr = None
-    link = os.link
-    mknod = os.mknod
+    link = None                 # No hardlinks
+    mknod = None                # No devices
     mkdir = os.mkdir
     readlink = os.readlink
     rmdir = os.rmdir
@@ -217,31 +221,32 @@ class ShareBox(LoggingMixIn, Operations):
             'f_files', 'f_flag', 'f_frsize', 'f_namemax'))
 
     def create(self, path, mode):
-        with self.rwlock:
-            fh = os.open(path, os.O_WRONLY | os.O_CREAT, mode)
-            with CopyOnWrite(path, fh, self.opened_copies, unlock=True,
-                    commit=False):
-                return fh
+        return os.open(path, os.O_WRONLY | os.O_CREAT, mode)
 
     def utimens(self, path, times):
-        os.utime(path, times)
+        if path == './.command':
+            raise FuseOSError(EACCES)
+        else:
+            os.utime(path, times)
 
     def readdir(self, path, fh):
         """
-        We have a special directory in the root to communicate with
-        sharebox.
+        We have special files in the root to communicate with sharebox.
         """
         if path == './':
-            return ['.', '..', '.sharebox'] + os.listdir(path)
-        if path == './.sharebox':
-            return ['.', '..', 'state', 'command']
+            return ['.', '..', '.command'] + os.listdir(path)
         else:
             return ['.', '..'] + os.listdir(path)
 
     def access(self, path, mode):
-        if not (path == './.sharebox' or
-                path == './.sharebox/state' or
-                path == './.sharebox/command'):
+        """
+        Annexed files can be accessed any mode as long are they are
+        present.
+        """
+        if path == './.command':
+            if mode & os.R_OK:
+                raise FuseOSError(EACCES)
+        else:
             if annexed(path):
                 if not os.path.exists(path):
                     raise FuseOSError(EACCES)
@@ -255,23 +260,20 @@ class ShareBox(LoggingMixIn, Operations):
         system we first try to get it. If it fails, we refuse the access.
         Since we do copy on write, we do not need to try to open in write
         mode annexed files.
-
-        FIXME: this method has too much black magic. We should just alter
-        the write permission bit when opening. I don't think it is going
-        to work with executables.
         """
-        if path == './.sharebox/state' or path == './.sharebox/command':
+        if path == './.command':
             return os.open('/dev/null', flags)
-        res = None
-        if annexed(path):
-            if not os.path.exists(path):
-                shell_do('git annex get "%s"' % path)
-            if not os.path.exists(path):
-                raise FuseOSError(EACCES)
-            res = os.open(path, 32768) # magic to open read only
         else:
-            res = os.open(path, flags)
-        return res
+            res = None
+            if annexed(path):
+                if not os.path.exists(path):
+                    shell_do('git annex get "%s"' % path)
+                if not os.path.exists(path):
+                    raise FuseOSError(EACCES)
+                res = os.open(path, os.R_OK) # magic to open read only
+            else:
+                res = os.open(path, flags)
+            return res
 
     def getattr(self, path, fh=None):
         """
@@ -283,144 +285,150 @@ class ShareBox(LoggingMixIn, Operations):
         to show annexed files as regular and writable by altering the
         st_mode, not by replacing it.
         """
-        if path == './.sharebox':
+        if path == './.command':
             return {'st_ctime': time.time(), 'st_mtime': time.time(),
-                    'st_nlink': 2, 'st_mode': 16877, 'st_size': 4096,
+                    'st_nlink': 1, 'st_mode': 32896, 'st_size': 4096,
                     'st_gid': 1000, 'st_uid': 1000, 'st_atime':
                     time.time()}
-        if path == './.sharebox/state':
-            return {'st_ctime': time.time(), 'st_mtime': time.time(),
-                    'st_nlink': 1, 'st_mode': 33060, 'st_size': 0,
-                    'st_gid': 1000, 'st_uid': 1000, 'st_atime':
-                    time.time()}
-        if path == './.sharebox/command':
-            return {'st_ctime': time.time(), 'st_mtime': time.time(),
-                    'st_nlink': 1, 'st_mode': 32914, 'st_size': 0,
-                    'st_gid': 1000, 'st_uid': 1000, 'st_atime':
-                    time.time()}
-        path_ = path
-        faked_attr = {}
-        if annexed(path):
-            faked_attr ['st_mode'] = 33188 # we fake a 644 regular file
-            if os.path.exists(path):
-                base = os.path.dirname(path_)
-                path_ = os.path.join(base, os.readlink(path))
-            else:
-                faked_attr ['st_size'] = 0
-        st = os.lstat(path_)
-        res = dict((key, getattr(st, key)) for key in ('st_atime',
-            'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
-            'st_nlink', 'st_size', 'st_uid'))
-        for attr, value in faked_attr.items():
-            res [attr] = value
-        return res
+        else:
+            path_ = path
+            faked_attr = {}
+            if annexed(path):
+                faked_attr ['st_mode'] = 33188 # we fake a 644 regular file
+                if os.path.exists(path):
+                    base = os.path.dirname(path_)
+                    path_ = os.path.join(base, os.readlink(path))
+                else:
+                    faked_attr ['st_size'] = 0
+            st = os.lstat(path_)
+            res = dict((key, getattr(st, key)) for key in ('st_atime',
+                'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
+                'st_nlink', 'st_size', 'st_uid'))
+            for attr, value in faked_attr.items():
+                res [attr] = value
+            return res
 
     def chmod(self, path, mode):
-        if not (path == './.sharebox/state' or
-                path == './.sharebox/command'):
+        if path == './.command':
+            raise FuseOSError(EACCES)
+        else:
             with self.rwlock:
                 with AnnexUnlock(path):
                     os.chmod(path, mode)
 
     def chown(self, path, user, group):
-        if not (path == './.sharebox/state' or
-                path == './.sharebox/command'):
+        if path == './.command':
+            raise FuseOSError(EACCES)
+        else:
             with self.rwlock:
                 with AnnexUnlock(path):
                     os.chown(path, user, group)
 
     def truncate(self, path, length, fh=None):
-        if not (path == './.sharebox/state' or
-                path == './.sharebox/command'):
+        if path == './.command':
+            return
+        else:
             with self.rwlock:
                 with AnnexUnlock(path):
                     with open(path, 'r+') as f:
                         f.truncate(length)
 
     def flush(self, path, fh):
-        if not (path == './.sharebox/state' or
-                path == './.sharebox/command'):
+        if path == './.command':
+            return
+        else:
             with self.rwlock:
-                with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
-                        commit=False) as fh_:
+                with CopyOnWrite(path, fh, self.opened_copies,
+                        unlock=False, commit=False) as fh_:
                     os.fsync(fh_)
 
     def fsync(self, path, datasync, fh):
-        if not (path == './.sharebox/state' or
-                path == './.sharebox/command'):
+        if path == './.command':
+            return
+        else:
             with self.rwlock:
-                with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
-                        commit=False) as fh_:
+                with CopyOnWrite(path, fh, self.opened_copies,
+                        unlock=False, commit=False) as fh_:
                     os.fsync(fh_)
 
     def read(self, path, size, offset, fh):
-        if path == './.sharebox/state':
-            return 'test\n'
-        with self.rwlock:
-            with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
-                    commit=False) as fh_:
-                os.lseek(fh_, offset, 0)
-                return os.read(fh_, size)
+        if path == './.command':
+            return
+        else:
+            with self.rwlock:
+                with CopyOnWrite(path, fh, self.opened_copies,
+                        unlock=False, commit=False) as fh_:
+                    os.lseek(fh_, offset, 0)
+                    return os.read(fh_, size)
 
     def write(self, path, data, offset, fh):
-        if path == './.sharebox/command':
-            pass
-        with self.rwlock:
-            with CopyOnWrite(path, fh, self.opened_copies, unlock=True,
-                    commit=False) as fh_:
-                os.lseek(fh_, offset, 0)
-                os.write(fh_, data)
+        if path == './.command':
+            exec_sharebox_command(data)
+            return len(data)
+        else:
+            with self.rwlock:
+                with CopyOnWrite(path, fh, self.opened_copies,
+                        unlock=True, commit=False) as fh_:
+                    os.lseek(fh_, offset, 0)
+                    return os.write(fh_, data)
 
     def release(self, path, fh):
         """
         Closed files are commited and removed from the open fd list
         """
         with self.rwlock:
-            with CopyOnWrite(path, fh, self.opened_copies, unlock=False,
-                    commit=True) as fh_:
+            with CopyOnWrite(path, fh, self.opened_copies,
+                    unlock=False, commit=True):
                 os.close(fh)
 
     def rename(self, old, new):
-        with self.rwlock:
-            # Make sure to lock the file (and to annex it if it was not)
-            if not ignored(old):
-                shell_do('git annex add "%s"' % old)
-            os.rename(old, '.' + new)
-            if ignored(old) or ignored('.' + new):
+        if old == './.command' or new == '/.command':
+            raise FuseOSError(EACCES)
+        else:
+            with self.rwlock:
+                # Make sure to lock the file (and to annex it if it was not)
                 if not ignored(old):
-                    shell_do('git rm "%s"' % old)
-                    shell_do('git commit -m "moved %s to ignored file"' % old)
-                if not ignored('.' + new):
-                    shell_do('git annex add "%s"' % new)
-                    shell_do('git commit -m "moved an ignored file to %s"' % new)
-            else:
-                shell_do('git mv "%s" "%s"' % (old, '.' + new))
-                shell_do('git commit -m "moved %s to .%s"' % (old, new))
+                    shell_do('git annex add "%s"' % old)
+                os.rename(old, '.' + new)
+                if ignored(old) or ignored('.' + new):
+                    if not ignored(old):
+                        shell_do('git rm "%s"' % old)
+                        shell_do('git commit -m "moved %s to ignored file"' % old)
+                    if not ignored('.' + new):
+                        shell_do('git annex add ".%s"' % new)
+                        shell_do('git commit -m "moved an ignored file to .%s"' % new)
+                else:
+                    shell_do('git mv "%s" ".%s"' % (old, new))
+                    shell_do('git commit -m "moved %s to .%s"' % (old, new))
 
 
     def symlink(self, target, source):
-        with self.rwlock:
-            os.symlink(source, target)
-            if not ignored(target):
-                shell_do('git annex add "%s"' % target)
-                shell_do('git commit -m "created symlink %s -> %s"' %(target,
-                    source) )
+        if target == './.command':
+            raise FuseOSError(EACCES)
+        else:
+            with self.rwlock:
+                os.symlink(source, target)
+                if not ignored(target):
+                    shell_do('git annex add "%s"' % target)
+                    shell_do('git commit -m "created symlink %s -> %s"' %(target,
+                        source) )
 
     def unlink(self, path):
-        with self.rwlock:
-            os.unlink(path)
-            if not ignored(path):
-                shell_do('git rm "%s"' % path)
-                shell_do('git commit -m "removed %s"' % path)
+        if path == './.command':
+            raise FuseOSError(EACCES)
+        else:
+            with self.rwlock:
+                os.unlink(path)
+                if not ignored(path):
+                    shell_do('git rm "%s"' % path)
+                    shell_do('git commit -m "removed %s"' % path)
 
-def synchronize(sharebox, sync_interval):
-    """
-    Place to introduce the synchonization daemon
-    """
-    while 1:
-        time.sleep(float(sync_interval))
-        print 'synchronizing...'
-        os.chdir(sharebox.gitdir)
+    def exec_sharebox_command(self, text):
+        for command in text.strip().split('\n'):
+            if command == 'merge':
+                pass
+
+    def sync(self, manual_merge=False):
         shell_do('git fetch --all')
         repos = subprocess.Popen(
                 shlex.split('git remote show'),
@@ -429,10 +437,22 @@ def synchronize(sharebox, sync_interval):
             with sharebox.rwlock:
                 if not shell_do('git merge %s/master' % remote):
                     shell_do('git reset --hard')
-                    notify()
+                    if manual_merge:
+                        pass
+                    else:
+                        shell_do(notifycmd %
+                                "Manual merge is required. Run: \nsharebox --merge "+
+                                self.mountpoint)
                 else:
                     shell_do('git commit -m "merged with %s"' % remote)
-def notify():
+
+def auto_sync(sharebox):
+    while 1:
+        time.sleep(float(sharebox.sync_interval))
+        print 'synchronizing...'
+        sharebox.sync()
+
+def notify(text):
     """
     Notify the user that their is a conflict
     """
@@ -443,7 +463,8 @@ def merge_manually():
 
 if __name__ == "__main__":
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], "ho:", ["help"])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], "ho:m:", ["help",
+            "merge="])
     except getopt.GetoptError, err:
         print str(err)
         print __doc__
@@ -451,13 +472,23 @@ if __name__ == "__main__":
 
     gitdir = None
     foreground = False
-    sync = 0
+    sync_interval = 0
     numversions = 0
+    notifycmd = 'notify-send "sharebox" "%s"'
 
     for opt, arg in opts:
         if opt in ("-h", "--help"):
             print __doc__
             sys.exit(0)
+        if opt in ("-m", "--merge"):
+            mountpoint = os.path.realpath(arg)
+            if shell_do('grep %s /etc/mtab' % mountpoint):
+                with open(os.path.join(mountpoint, ".command"), 'w') as f:
+                    f.write("merge")
+                    sys.exit(0)
+            else:
+                print 'bad mountpoint'
+                sys.exit(1)
         if opt == "-o":
             if '=' in arg:
                 option = arg.split('=')[0]
@@ -465,9 +496,11 @@ if __name__ == "__main__":
                 if option == 'gitdir':
                     gitdir = value
                 if option == 'sync':
-                    sync = int(value)
+                    sync_interval = int(value)
                 if option == 'numversions':
                     numversions = int(value)
+                if option == 'notifycmd':
+                    notifycmd = value
             else:
                 if arg == 'foreground':
                     foreground=True
@@ -483,10 +516,10 @@ if __name__ == "__main__":
 
     mountpoint = os.path.realpath(mountpoint)
     gitdir = os.path.realpath(gitdir)
-    sharebox = ShareBox(gitdir)
+    sharebox = ShareBox(gitdir, mountpoint, sync_interval, numversions)
 
-    if sync:
-        t = threading.Thread(target=synchronize, args=(sharebox, sync))
+    if sharebox.sync_interval:
+        t = threading.Thread(target=auto_sync, args=(sharebox))
         t.daemon = True
         t.start()
 

@@ -18,10 +18,11 @@ clean(){
     rm -rf test
 }
 
-init local
-init remote
-mount local
-mount remote
-unmount local
-unmount remote
-clean
+mount_unmount(){
+    init local
+    mount local
+    unmount local
+    clean
+}
+
+mount_unmount
