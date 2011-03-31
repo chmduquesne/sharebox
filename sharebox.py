@@ -16,6 +16,10 @@ Options:
                                 everything" (default 0).
     -o getall                   when there are modifications on a remote,
                                 download the content of files.
+    -o notifycmd                How the filesystem should notify you about
+                                problems: string containing "%s" between
+                                quotes (default:
+                                'notify-send "sharebox" "%s"').
     -o foreground               debug mode.
 """
 from __future__ import with_statement
@@ -66,8 +70,12 @@ def shell_do(cmd):
     """
     calls the given shell command
     """
-    print cmd
-    p = subprocess.Popen(shlex.split(cmd))
+    #print cmd
+    p = None
+    stdin = None
+    for i in cmd.split('|'):
+        p = subprocess.Popen(shlex.split(i), stdin=stdin, stdout=subprocess.PIPE)
+        stdin = p.stdout
     p.wait()
     return not p.returncode # will return True if everything ok
 
@@ -138,8 +146,8 @@ class CopyOnWrite:
             if self.opened_copies.get(self.fh, None) == None:
                 if annexed(self.path):
                     shell_do('git annex unlock "%s"' % self.path)
-                self.opened_copies[self.fh] = os.open(self.path,
-                        os.O_WRONLY | os.O_CREAT)
+                    self.opened_copies[self.fh] = os.open(self.path,
+                            os.O_WRONLY | os.O_CREAT)
         return self.opened_copies.get(self.fh, self.fh)
 
     def __exit__(self, type, value, traceback):
@@ -177,7 +185,8 @@ class ShareBox(LoggingMixIn, Operations):
     - It pulls at regular intervals the other replicated copies and
       launches a merge program if there are conflicts.
     """
-    def __init__(self, gitdir, mountpoint, sync_interval, numversions):
+    def __init__(self, gitdir, mountpoint, sync_interval, numversions,
+            getall):
         """
         Calls 'git init' and 'git annex init' on the storage directory if
         necessary.
@@ -186,6 +195,7 @@ class ShareBox(LoggingMixIn, Operations):
         self.mountpoint = mountpoint
         self.sync_interval = sync_interval
         self.numversions = numversions
+        self.getall = getall
         self.rwlock = threading.Lock()
         self.opened_copies = {}
         with self.rwlock:
@@ -284,10 +294,14 @@ class ShareBox(LoggingMixIn, Operations):
         FIXME: this method has too much black magic. We should find a way
         to show annexed files as regular and writable by altering the
         st_mode, not by replacing it.
+
+        The file ./.command is a special file for communicating with the
+        filesystem, we fake its attributes.
         """
         if path == './.command':
+            # regular file, write-only, all the time attributes are 'now'
             return {'st_ctime': time.time(), 'st_mtime': time.time(),
-                    'st_nlink': 1, 'st_mode': 32896, 'st_size': 4096,
+                    'st_nlink': 1, 'st_mode': 32896, 'st_size': 0,
                     'st_gid': 1000, 'st_uid': 1000, 'st_atime':
                     time.time()}
         else:
@@ -363,7 +377,7 @@ class ShareBox(LoggingMixIn, Operations):
 
     def write(self, path, data, offset, fh):
         if path == './.command':
-            exec_sharebox_command(data)
+            self.dotcommand(data)
             return len(data)
         else:
             with self.rwlock:
@@ -423,10 +437,12 @@ class ShareBox(LoggingMixIn, Operations):
                     shell_do('git rm "%s"' % path)
                     shell_do('git commit -m "removed %s"' % path)
 
-    def exec_sharebox_command(self, text):
+    def dotcommand(self, text):
         for command in text.strip().split('\n'):
             if command == 'merge':
-                pass
+                self.sync(True)
+            if command.startswith('get '):
+                shell_do('git annex ' + command)
 
     def sync(self, manual_merge=False):
         shell_do('git fetch --all')
@@ -436,42 +452,59 @@ class ShareBox(LoggingMixIn, Operations):
         for remote in repos:
             with sharebox.rwlock:
                 if not shell_do('git merge %s/master' % remote):
-                    shell_do('git reset --hard')
                     if manual_merge:
-                        pass
+                        shell_do(notifycmd %
+                                "Manual merge invoked, but not implemented.")
+                        shell_do('git reset --hard')
+                        shell_do('git clean -f')
                     else:
+                        shell_do('git reset --hard')
+                        shell_do('git clean -f')
                         shell_do(notifycmd %
                                 "Manual merge is required. Run: \nsharebox --merge "+
                                 self.mountpoint)
                 else:
+                    if self.getall:
+                        shell_do('git annex get .')
                     shell_do('git commit -m "merged with %s"' % remote)
 
 def auto_sync(sharebox):
-    while 1:
-        time.sleep(float(sharebox.sync_interval))
-        print 'synchronizing...'
-        sharebox.sync()
+    if sharebox.sync_interval:
+        while 1:
+            time.sleep(float(sharebox.sync_interval))
+            print 'synchronizing...'
+            sharebox.sync()
 
-def notify(text):
+def send_sharebox_command(command, mountpoint):
     """
-    Notify the user that their is a conflict
+    send a command to the sharebox file system mounted on the mountpoint:
+    write the command to the .command file on the root
     """
-    pass
-
-def merge_manually():
-    pass
+    if not shell_do('grep %s /etc/mtab' % mountpoint):
+        print 'Mountpoint %s was not found in /etc/mtab' % mountpoint
+        return 1
+    else:
+        valid_commands = ["merge", "get"]
+        if not command.split()[0] in valid_commands:
+            print '%s : unrecognized command' % command
+            return 1
+        else:
+            with open(os.path.join(mountpoint, ".command"), 'w') as f:
+                f.write(command)
 
 if __name__ == "__main__":
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], "ho:m:", ["help",
-            "merge="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], "ho:c:", ["help",
+            "command="])
     except getopt.GetoptError, err:
         print str(err)
         print __doc__
         sys.exit(1)
 
+    command = None
     gitdir = None
     foreground = False
+    getall = False
     sync_interval = 0
     numversions = 0
     notifycmd = 'notify-send "sharebox" "%s"'
@@ -480,47 +513,54 @@ if __name__ == "__main__":
         if opt in ("-h", "--help"):
             print __doc__
             sys.exit(0)
-        if opt in ("-m", "--merge"):
-            mountpoint = os.path.realpath(arg)
-            if shell_do('grep %s /etc/mtab' % mountpoint):
-                with open(os.path.join(mountpoint, ".command"), 'w') as f:
-                    f.write("merge")
-                    sys.exit(0)
-            else:
-                print 'bad mountpoint'
-                sys.exit(1)
+        if opt in ("-c", "--command"):
+            command = arg
         if opt == "-o":
             if '=' in arg:
                 option = arg.split('=')[0]
                 value = arg.replace( option + '=', '', 1)
                 if option == 'gitdir':
                     gitdir = value
-                if option == 'sync':
+                elif option == 'sync':
                     sync_interval = int(value)
-                if option == 'numversions':
+                elif option == 'numversions':
                     numversions = int(value)
-                if option == 'notifycmd':
+                elif option == 'notifycmd':
                     notifycmd = value
+                else:
+                    print("unrecognized option: %s" % option)
+                    sys.exit(1)
             else:
                 if arg == 'foreground':
                     foreground=True
-
-    if not gitdir:
-        print 'missing the gitdir option'
-        sys.exit(1)
+                elif arg == 'getall':
+                    getall=True
+                else:
+                    print("unrecognized option: %s" % arg)
+                    sys.exit(1)
 
     mountpoint = "".join(args)
     if mountpoint == "":
         print 'invalid mountpoint'
         sys.exit(1)
-
     mountpoint = os.path.realpath(mountpoint)
-    gitdir = os.path.realpath(gitdir)
-    sharebox = ShareBox(gitdir, mountpoint, sync_interval, numversions)
 
-    if sharebox.sync_interval:
-        t = threading.Thread(target=auto_sync, args=(sharebox))
-        t.daemon = True
-        t.start()
+    if command:
+        retcode = send_sharebox_command(command, mountpoint)
+        sys.exit(retcode)
+    else:
+        if not gitdir:
+            print "Can't mount, missing the gitdir option."
+            print __doc__
+            sys.exit(1)
+        gitdir = os.path.realpath(gitdir)
 
-    fuse = FUSE(sharebox, mountpoint, foreground=foreground)
+        sharebox = ShareBox(gitdir, mountpoint, sync_interval,
+                numversions, getall)
+
+        if sharebox.sync_interval:
+            t = threading.Thread(target=auto_sync, args=(sharebox))
+            t.daemon = True
+            t.start()
+
+        fuse = FUSE(sharebox, mountpoint, foreground=foreground)

@@ -1,10 +1,16 @@
 debug-interactive: dirs
-	python sharebox.py test/local/mnt -o gitdir=test/local/git -o foreground -o notifycmd='foo "%s"'
+	python sharebox.py test/local/mnt -o gitdir=test/local/git -o foreground
 	chmod -R +w test
 	rm -rf test
 
+test:
+	@sh ./test.sh
+
+test-interactive:
+	@sh ./test.sh --interactive
+
 unmount:
-	fusermount -u test/local/mnt
+	@fusermount -u test/local/mnt
 
 dirs:
 	@mkdir -p test/local/mnt
