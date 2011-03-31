@@ -21,6 +21,11 @@ the work. You can thank its creator for being a genius.
 
 == Walkthrough ==
 
+DISCLAIMER: This walkthough is the desired interface for sharebox, but it
+actually does not work right now. You can consider it as part of the
+functional design. If you want to give a try to sharebox, add
+"-o foreground" in the mount options everywhere.
+
 1) We create an empty directory where to actually put the files. Sharebox
 will manage this directory for us.
 
