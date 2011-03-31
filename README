@@ -19,30 +19,47 @@ An important detail: sharebox is nothing more than a very simple
 filesystem layer around the wonderful git-annex, which actually does all
 the work. You can thank its creator for being a genius.
 
-== Howto ==
+== Walkthrough ==
 
-Here is the output of sharebox --help:
+1) We create an empty directory where to actually put the files. Sharebox
+will manage this directory for us.
 
-sharebox <mountpoint> [-o <option>]
+mkdir -p test/local/git
 
-Options:
-    -o gitdir=<path>            mandatory: path to the git directory to
-                                actually store the files in.
-    -o sync=<seconds>           interval to wait between syncronisations.
-                                Any number <=0 means "never" (default 0).
-    -o numversions=<number>     number of different versions of the same
-                                file to keep. Any number <=0 means "keep
-                                everything" (default 0).
-    -o getall                   when there are modifications on a remote,
-                                download the content of files.
-    -o foreground               debug mode.
+2) We create a directory that will be sharebox's mountpoint
 
-Adding a mirror:
+mkdir -p test/local/mnt
 
-Go to the local git directory and add the remote git directory as a mirror
-to pull from:
+3) We mount test/local/git into test/local/mnt. 'sync' indicates how many
+seconds the filesystem should wait between querying peers for changes.
 
-git remote add <name> <url>
+sharebox.py test/local/mnt -o gitdir=test/local/git -o sync=10
+
+4) Now let's set up a mirror. We go with the usual
+
+mkdir -p test/remote/git
+mkdir -p test/remote/mnt
+sharebox.py test/remote/mnt -o gitdir=test/remote/git -o sync=10
+
+5) We still need to set the git directories as remotes of each another
+
+cd test/remote/git
+git remote add local ../../local/git
+cd ../../local/git
+git remote add remote ../../remote/git
+cd ../../..
+
+6) It is now time for testing!
+
+echo test > test/local/mnt/foo
+sleep 11 && ls -l test/remote/mnt
+touch test/remote/mnt/foo
+cat test/remote/mnt/foo
+
+7) We are done. We can unmount the two directories
+
+fusermount -u test/local/mnt
+fusermount -u test/remote/mnt
 
 == State of the project ==
 
@@ -70,9 +87,6 @@ What is implemented, but does not work very well:
 
 What is not implemented:
 - Documentation.
-- Conflicts are not handled yet.
 - The number of copies kept for the same file is not setable yet, but it
   should become a mount option.
 - A good test suite.
-
-
