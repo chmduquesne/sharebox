@@ -39,6 +39,8 @@ import sys
 import getopt
 import time
 
+foreground = False
+
 def ignored(path):
     """
     Returns true if we should ignore this file, false otherwise. This
@@ -70,7 +72,8 @@ def shell_do(cmd):
     """
     calls the given shell command
     """
-    #print cmd
+    if foreground:
+        print cmd
     p = None
     stdin = None
     for i in cmd.split('|'):
@@ -503,7 +506,6 @@ if __name__ == "__main__":
 
     command = None
     gitdir = None
-    foreground = False
     getall = False
     sync_interval = 0
     numversions = 0
