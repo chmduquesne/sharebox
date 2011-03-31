@@ -19,6 +19,10 @@ mount(){
     ./sharebox.py test/$1/mnt -o gitdir=test/$1/git
 }
 
+mount_autosync(){
+    ./sharebox.py test/$1/mnt -o gitdir=test/$1/git -o sync=1
+}
+
 unmount(){
     fusermount -u -z test/$1/mnt >/dev/null
 }
@@ -45,11 +49,11 @@ debug_interrupt(){
 }
 
 test_must_success(){
-    ($@) || echo "failure"
+    ($@) || echo "Error: This failed: $@"
 }
 
 test_must_fail(){
-    ($@) && echo "failure"
+    ($@) && echo "Error: This succeeded: $@"
 }
 
 #-----------------------------------------------------------------------#
@@ -65,7 +69,7 @@ mount_unmount(){
     clean
 }
 
-simple_sync(){
+sync_simple(){
     echo "simple synchronization"
     init local
     init remote
@@ -73,7 +77,7 @@ simple_sync(){
     mount remote
     make_peers local remote
     echo "test_line" >> test/local/mnt/test_file
-    ./sharebox.py -c merge test/remote/mnt
+    ./sharebox.py -c sync test/remote/mnt
     # after sync, the file must exist
     test_must_success test -e test/remote/mnt/test_file
     # but diffing should fail because it is recorded as size 0
@@ -88,4 +92,4 @@ simple_sync(){
 }
 
 mount_unmount
-simple_sync
+sync_simple

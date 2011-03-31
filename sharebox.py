@@ -9,8 +9,6 @@ sharebox <mountpoint> [-o <option>]
 Options:
     -o gitdir=<path>            mandatory: path to the git directory to
                                 actually store the files in.
-    -o sync=<seconds>           interval to wait between syncronisations.
-                                Any number <=0 means "never" (default 0).
     -o numversions=<number>     number of different versions of the same
                                 file to keep. Any number <=0 means "keep
                                 everything" (default 0).
@@ -188,7 +186,7 @@ class ShareBox(LoggingMixIn, Operations):
     - It pulls at regular intervals the other replicated copies and
       launches a merge program if there are conflicts.
     """
-    def __init__(self, gitdir, mountpoint, sync_interval, numversions,
+    def __init__(self, gitdir, mountpoint, numversions,
             getall):
         """
         Calls 'git init' and 'git annex init' on the storage directory if
@@ -196,7 +194,6 @@ class ShareBox(LoggingMixIn, Operations):
         """
         self.gitdir = gitdir
         self.mountpoint = mountpoint
-        self.sync_interval = sync_interval
         self.numversions = numversions
         self.getall = getall
         self.rwlock = threading.Lock()
@@ -442,41 +439,37 @@ class ShareBox(LoggingMixIn, Operations):
 
     def dotcommand(self, text):
         for command in text.strip().split('\n'):
+            if command == 'sync':
+                self.sync()
             if command == 'merge':
                 self.sync(True)
             if command.startswith('get '):
                 shell_do('git annex ' + command)
 
     def sync(self, manual_merge=False):
-        shell_do('git fetch --all')
-        repos = subprocess.Popen(
-                shlex.split('git remote show'),
-                stdout=subprocess.PIPE).communicate()[0].strip().split('\n')
-        for remote in repos:
-            with sharebox.rwlock:
-                if not shell_do('git merge %s/master' % remote):
-                    if manual_merge:
-                        shell_do(notifycmd %
-                                "Manual merge invoked, but not implemented.")
-                        shell_do('git reset --hard')
-                        shell_do('git clean -f')
+        with sharebox.rwlock:
+            shell_do('git fetch --all')
+            repos = subprocess.Popen(
+                    shlex.split('git remote show'),
+                    stdout=subprocess.PIPE).communicate()[0].strip().split('\n')
+            for remote in repos:
+                if remote:
+                    if not shell_do('git merge %s/master' % remote):
+                        if manual_merge:
+                            shell_do(notifycmd %
+                                    "Manual merge invoked, but not implemented.")
+                            shell_do('git reset --hard')
+                            shell_do('git clean -f')
+                        else:
+                            shell_do('git reset --hard')
+                            shell_do('git clean -f')
+                            shell_do(notifycmd %
+                                    "Manual merge is required. Run: \nsharebox --merge "+
+                                    self.mountpoint)
                     else:
-                        shell_do('git reset --hard')
-                        shell_do('git clean -f')
-                        shell_do(notifycmd %
-                                "Manual merge is required. Run: \nsharebox --merge "+
-                                self.mountpoint)
-                else:
-                    if self.getall:
-                        shell_do('git annex get .')
-                    shell_do('git commit -m "merged with %s"' % remote)
-
-def auto_sync(sharebox):
-    if sharebox.sync_interval:
-        while 1:
-            time.sleep(float(sharebox.sync_interval))
-            print 'synchronizing...'
-            sharebox.sync()
+                        if self.getall:
+                            shell_do('git annex get .')
+                        shell_do('git commit -m "merged with %s"' % remote)
 
 def send_sharebox_command(command, mountpoint):
     """
@@ -487,7 +480,7 @@ def send_sharebox_command(command, mountpoint):
         print 'Mountpoint %s was not found in /etc/mtab' % mountpoint
         return 1
     else:
-        valid_commands = ["merge", "get"]
+        valid_commands = ["merge", "get", "sync"]
         if not command.split()[0] in valid_commands:
             print '%s : unrecognized command' % command
             return 1
@@ -507,7 +500,6 @@ if __name__ == "__main__":
     command = None
     gitdir = None
     getall = False
-    sync_interval = 0
     numversions = 0
     notifycmd = 'notify-send "sharebox" "%s"'
 
@@ -523,8 +515,6 @@ if __name__ == "__main__":
                 value = arg.replace( option + '=', '', 1)
                 if option == 'gitdir':
                     gitdir = value
-                elif option == 'sync':
-                    sync_interval = int(value)
                 elif option == 'numversions':
                     numversions = int(value)
                 elif option == 'notifycmd':
@@ -557,12 +547,5 @@ if __name__ == "__main__":
             sys.exit(1)
         gitdir = os.path.realpath(gitdir)
 
-        sharebox = ShareBox(gitdir, mountpoint, sync_interval,
-                numversions, getall)
-
-        if sharebox.sync_interval:
-            t = threading.Thread(target=auto_sync, args=(sharebox))
-            t.daemon = True
-            t.start()
-
+        sharebox = ShareBox(gitdir, mountpoint, numversions, getall)
         fuse = FUSE(sharebox, mountpoint, foreground=foreground)

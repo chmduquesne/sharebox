@@ -1,4 +1,4 @@
-sharebox is a distributed FUSE filesystem for sharing files across several
+Sharebox is a distributed FUSE filesystem for sharing files across several
 machines. It supports disconnected operations: you can go offline and
 modify a file: the modifications will be propagated when you'll be back.
 If several hosts modify the same file, an interactive conflict handler is
@@ -21,58 +21,68 @@ the work. You can thank its creator for being a genius.
 
 == Walkthrough ==
 
-DISCLAIMER: This walkthough is the desired interface for sharebox, but it
-actually does not work right now. You can consider it as part of the
-functional design. If you want to give a try to sharebox, add
-"-o foreground" in the mount options everywhere.
-
 1) We create an empty directory where to actually put the files. Sharebox
 will manage this directory for us.
 
-mkdir -p test/local/git
+    mkdir -p test/local/git
 
 2) We create a directory that will be sharebox's mountpoint
 
-mkdir -p test/local/mnt
+    mkdir -p test/local/mnt
 
-3) We mount test/local/git into test/local/mnt. 'sync' indicates how many
-seconds the filesystem should wait between querying peers for changes.
+3) We mount test/local/git into test/local/mnt.
 
-sharebox.py test/local/mnt -o gitdir=test/local/git -o sync=10
+    ./sharebox.py test/local/mnt -o gitdir=test/local/git
 
 4) Now let's set up a mirror. We go with the usual
 
-mkdir -p test/remote/git
-mkdir -p test/remote/mnt
-sharebox.py test/remote/mnt -o gitdir=test/remote/git -o sync=10
+    mkdir -p test/remote/git
+    mkdir -p test/remote/mnt
+    ./sharebox.py test/remote/mnt -o gitdir=test/remote/git
 
 5) We still need to set the git directories as remotes of each another
 
-cd test/remote/git
-git remote add local ../../local/git
-cd ../../local/git
-git remote add remote ../../remote/git
-cd ../../..
+    cd test/remote/git
+    git remote add local ../../local/git
+    cd ../../local/git
+    git remote add remote ../../remote/git
+    cd ../../..
 
-6) It is now time for testing!
+6) It is now time for testing! Let us create a file
 
-echo test > test/local/mnt/foo
-sleep 11 && ls -l test/remote/mnt
-touch test/remote/mnt/foo
-cat test/remote/mnt/foo
+    echo test > test/local/mnt/foo
 
-7) We are done. We can unmount the two directories
+7) There is nothing on the remote
+
+    ls test/remote/mnt
+
+8) We will now tell the remote filesystem to synchronize (this typically
+goes in a crontab)
+
+    ./sharebox.py --command sync test/remote/mnt
+
+8) The remote now appears to have the file foo. However, it is not really
+here (it would if we had mounted it with the option "-o getall"). We can
+see a file named foo, but its size appears to be 0.
+
+    ls -l test/remote/mnt
+     total 0
+     -rw-r--r-- 1 user user 0 2011-03-31 18:16 foo
+
+9) Though if we try to access to foo, it is downloaded on the fly:
+
+    touch test/remote/mnt/foo
+    cat test/remote/mnt/foo
+     test
+
+10) We are done. We can unmount the two directories
 
 fusermount -u test/local/mnt
 fusermount -u test/remote/mnt
 
-== Documentation ==
-
-There is just this README, and the output of sharebox.py --help.
-
 == State of the project ==
 
-sharebox is at the very early stage. Even the author still does not use it
+Sharebox is at the very early stage. Even the author still does not use it
 as a working solution.
 
 What is implemented right now:
