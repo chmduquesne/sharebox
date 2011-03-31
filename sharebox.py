@@ -5,6 +5,7 @@ Distributed mirroring filesystem based on git-annex.
 Usage:
 
 sharebox <mountpoint> [-o <option>]
+sharebox -c [command] <mountpoint>
 
 Options:
     -o gitdir=<path>            mandatory: path to the git directory to
@@ -19,6 +20,13 @@ Options:
                                 quotes (default:
                                 'notify-send "sharebox" "%s"').
     -o foreground               debug mode.
+
+Commands:
+    sync                        queries all the remotes for changes and
+                                merges if possible.
+    merge                       the same except if there are conflicts,
+                                a merge interface is spawned to help you
+                                choose which files you want to keep
 """
 from __future__ import with_statement
 

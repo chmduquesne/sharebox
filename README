@@ -82,33 +82,16 @@ fusermount -u test/remote/mnt
 
 == State of the project ==
 
-Sharebox is at the very early stage. Even the author still does not use it
-as a working solution.
-
-What is implemented right now:
-- The default state for files is to be commited to git-annex: their
-  content is not versionned, only links to their content.
-- They are presented by the file system as regular files, resolved by
-  reading the links. If they are not present on the system, they are seen
-  as empty files.
-- When a file not present on the system is accessed (with the open()
-  system call) 'git annex get' is used to get the content of the file (If
-  it is not possible to get the file, there is an access error).
-- Copy on write is used: When you open a file, you open the read-only file
-  linked by git-annex (even if you tried to open it with write access). If
-  you do not modify the file, nothing happens, but if you do, the file is
-  'git annex unlock'-ed (It then occupies twice the necessary space) and
-  the result is commited to git when the file is closed.
-
-What is implemented, but does not work very well:
-- There is a mount option for specifying a synchronisation interval. This
-  is not working well yet.
+Sharebox is at a very early stage. Even the author still does not use it
+as a working solution. There are features that are not implemented, and
+there are features that haven't even been decided.
 
 What is not implemented:
-- Documentation.
+- As usual, there is no documentation and very few unit tests
+- Conflicts are not handled yet
 - The number of copies kept for the same file is not setable yet, but it
   should become a mount option.
-- A good test suite.
+- There is no way to drop unnecessary copies, nor to get deleted files
 
 == Debugging ==
 
