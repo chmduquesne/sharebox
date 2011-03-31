@@ -1,0 +1,15 @@
+We talk here about the functional design, not the implementation design.
+
+Sharebox is a filesystem, and every way to interact with it should be via
+classical filesystem commands.
+
+When mounted, there already exists a special file in the root that is
+named ".command". This file is here for telling sharebox to do stuff
+(setting properties, managing files...)
+
+If necessary, a special file named ".properties" should be created to get
+some informations about the filesystem (path to gitdir, mount options)...
+
+Former versions of files should be accessible through a special directory
+".trash". If possible, the user should be able to restore them or delete
+them via regular filesystem commands.

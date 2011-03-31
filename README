@@ -61,6 +61,10 @@ cat test/remote/mnt/foo
 fusermount -u test/local/mnt
 fusermount -u test/remote/mnt
 
+== Documentation ==
+
+There is just this README, and the output of sharebox.py --help.
+
 == State of the project ==
 
 sharebox is at the very early stage. Even the author still does not use it
@@ -90,3 +94,9 @@ What is not implemented:
 - The number of copies kept for the same file is not setable yet, but it
   should become a mount option.
 - A good test suite.
+
+== Debugging ==
+
+To debug, mount with the foreground option:
+
+sharebox.py test/local/mnt -o gitdir=test/local/git -o foreground
