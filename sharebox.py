@@ -465,10 +465,8 @@ class ShareBox(LoggingMixIn, Operations):
                 if remote:
                     if not shell_do('git merge %s/master' % remote):
                         if manual_merge:
-                            shell_do(self.notifycmd %
-                                    "Manual merge invoked, but not implemented.")
-                            shell_do('git reset --hard')
-                            shell_do('git clean -f')
+                            if shell_do('mergetool'):
+                                shell_do('git commit -m "merged with %s"' % remote)
                         else:
                             shell_do('git reset --hard')
                             shell_do('git clean -f')
