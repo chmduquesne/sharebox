@@ -195,7 +195,7 @@ class ShareBox(LoggingMixIn, Operations):
       launches a merge program if there are conflicts.
     """
     def __init__(self, gitdir, mountpoint, numversions,
-            getall):
+            getall, notifycmd):
         """
         Calls 'git init' and 'git annex init' on the storage directory if
         necessary.
@@ -204,6 +204,7 @@ class ShareBox(LoggingMixIn, Operations):
         self.mountpoint = mountpoint
         self.numversions = numversions
         self.getall = getall
+        self.notifycmd = notifycmd
         self.rwlock = threading.Lock()
         self.opened_copies = {}
         with self.rwlock:
@@ -464,14 +465,14 @@ class ShareBox(LoggingMixIn, Operations):
                 if remote:
                     if not shell_do('git merge %s/master' % remote):
                         if manual_merge:
-                            shell_do(notifycmd %
+                            shell_do(self.notifycmd %
                                     "Manual merge invoked, but not implemented.")
                             shell_do('git reset --hard')
                             shell_do('git clean -f')
                         else:
                             shell_do('git reset --hard')
                             shell_do('git clean -f')
-                            shell_do(notifycmd %
+                            shell_do(self.notifycmd %
                                     "Manual merge is required. Run: \nsharebox --merge "+
                                     self.mountpoint)
                     else:
@@ -555,5 +556,6 @@ if __name__ == "__main__":
             sys.exit(1)
         gitdir = os.path.realpath(gitdir)
 
-        sharebox = ShareBox(gitdir, mountpoint, numversions, getall)
+        sharebox = ShareBox(gitdir, mountpoint, numversions, getall,
+                notifycmd)
         fuse = FUSE(sharebox, mountpoint, foreground=foreground)
