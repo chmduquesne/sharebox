@@ -1,0 +1,175 @@
+<?xml version="1.0"?>
+<interface>
+  <requires lib="gtk+" version="2.16"/>
+  <!-- interface-naming-policy project-wide -->
+  <object class="GtkDialog" id="dialog">
+    <property name="border_width">5</property>
+    <property name="title" translatable="yes">What versions do you want to keep?</property>
+    <property name="type_hint">normal</property>
+    <signal name="destroy" handler="on_dialog_destroy"/>
+    <child internal-child="vbox">
+      <object class="GtkVBox" id="dialog-vbox1">
+        <property name="visible">True</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">2</property>
+        <child>
+          <object class="GtkScrolledWindow" id="scrolledwindow1">
+            <property name="visible">True</property>
+            <property name="can_focus">True</property>
+            <property name="hscrollbar_policy">automatic</property>
+            <property name="vscrollbar_policy">automatic</property>
+            <child>
+              <object class="GtkViewport" id="viewport1">
+                <property name="visible">True</property>
+                <property name="resize_mode">queue</property>
+                <child>
+                  <object class="GtkVBox" id="vbox1">
+                    <property name="visible">True</property>
+                    <property name="orientation">vertical</property>
+                    <property name="homogeneous">True</property>
+                    <child>
+                      <object class="GtkHBox" id="hbox1">
+                        <property name="visible">True</property>
+                        <property name="homogeneous">True</property>
+                        <child>
+                          <object class="GtkLabel" id="all_files_label">
+                            <property name="visible">True</property>
+                            <property name="xalign">0</property>
+                            <property name="label" translatable="yes">All</property>
+                          </object>
+                          <packing>
+                            <property name="position">0</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkHButtonBox" id="hbuttonbox3">
+                            <property name="visible">True</property>
+                            <child>
+                              <object class="GtkRadioButton" id="keep_local_button">
+                                <property name="label" translatable="yes">Keep local</property>
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="receives_default">False</property>
+                                <property name="active">True</property>
+                                <property name="draw_indicator">True</property>
+                                <signal name="toggled" handler="on_global_keep_button_toggled"/>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">False</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="position">1</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkHButtonBox" id="hbuttonbox1">
+                            <property name="visible">True</property>
+                            <child>
+                              <placeholder/>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="position">2</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkHButtonBox" id="hbuttonbox4">
+                            <property name="visible">True</property>
+                            <child>
+                              <object class="GtkRadioButton" id="keep_remote_button">
+                                <property name="label" translatable="yes">Keep remote</property>
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="receives_default">False</property>
+                                <property name="active">True</property>
+                                <property name="draw_indicator">True</property>
+                                <property name="group">keep_local_button</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">False</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="position">3</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkHButtonBox" id="hbuttonbox2">
+                            <property name="visible">True</property>
+                            <child>
+                              <placeholder/>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="position">4</property>
+                          </packing>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="position">1</property>
+          </packing>
+        </child>
+        <child internal-child="action_area">
+          <object class="GtkHButtonBox" id="dialog-action_area1">
+            <property name="visible">True</property>
+            <property name="layout_style">end</property>
+            <child>
+              <object class="GtkButton" id="cancel_button">
+                <property name="label" translatable="yes">Cancel</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">True</property>
+                <signal name="clicked" handler="on_cancel_button_clicked"/>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">False</property>
+                <property name="position">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="ok_button">
+                <property name="label" translatable="yes">Ok</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">True</property>
+                <property name="xalign">0.56000000238418579</property>
+                <signal name="clicked" handler="on_ok_button_clicked"/>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">False</property>
+                <property name="position">1</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="pack_type">end</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+    <action-widgets>
+      <action-widget response="0">cancel_button</action-widget>
+      <action-widget response="0">ok_button</action-widget>
+    </action-widgets>
+  </object>
+</interface>
