@@ -1,19 +1,33 @@
+Important note: while what is in this README is still relevant for the
+code in this project, I have stopped developing the python version of
+sharebox.  Due to performance issues, I have switched to a C version,
+which makes copying big files one order of magnitude faster.
+
+See https://github.com/chmduquesne/sharebox-fs
+
+----
+
 Sharebox is a distributed FUSE filesystem for sharing files across several
-machines. It supports disconnected operations: you can go offline and
-modify a file and the modifications will be propagated when you'll be back.
-If several hosts modify the same file, an interactive conflict handler is
-spawned on the hosts (but only one host needs to resolve the conflict). Of
-course, built-in automatic versioning is provided with a configurable
-number of versions. It is also space-efficient: files appear as present on
-the system but are actually dowloaded from peers on demand. You can also
-control where your data lives with a set of commands.
+machines.
+
+- [ok] It supports disconnected operations: you can go offline and modify
+  a file and the modifications will be propagated when you'll be back.
+- [not implemented - see the branch mergetool] If several hosts modify the
+  same file, an interactive conflict handler is spawned on the hosts (but
+  only one host needs to resolve the conflict).
+- [ok] Of course, built-in automatic versioning is provided
+- [not implemented] with a configurable number of versions.
+- [ok] It is also space-efficient: files appear as present on the system
+  but are actually downloaded from peers on demand.
+- [not implemented] You can also control where your data lives with a set
+  of commands.
 
 Features:
 
 - fully distributed
 - offline operations
 - copy on write
-- builtin versionning
+- builtin versioning
 - interactive conflicts handling
 
 An important detail: sharebox is nothing more than a very simple
