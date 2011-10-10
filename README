@@ -1,14 +1,15 @@
 Sharebox is a distributed FUSE filesystem for sharing files across several
 machines. It supports disconnected operations: you can go offline and
-modify a file: the modifications will be propagated when you'll be back.
+modify a file and the modifications will be propagated when you'll be back.
 If several hosts modify the same file, an interactive conflict handler is
 spawned on the hosts (but only one host needs to resolve the conflict). Of
-course, builtin automatic versionning is provided, with a configurable
+course, built-in automatic versioning is provided with a configurable
 number of versions. It is also space-efficient: files appear as present on
-the system but are actually dowloaded from peers ondemand. You can also
+the system but are actually dowloaded from peers on demand. You can also
 control where your data lives with a set of commands.
 
 Features:
+
 - fully distributed
 - offline operations
 - copy on write
@@ -26,7 +27,7 @@ will manage this directory for us.
 
     mkdir -p test/local/git
 
-2) We create a directory that will be sharebox's mountpoint
+2) We create a directory that will be sharebox's mountpoint.
 
     mkdir -p test/local/mnt
 
@@ -34,13 +35,13 @@ will manage this directory for us.
 
     ./sharebox.py test/local/mnt -o gitdir=test/local/git
 
-4) Now let's set up a mirror. We go with the usual
+4) Now let's set up a mirror. We go with the usual commands.
 
     mkdir -p test/remote/git
     mkdir -p test/remote/mnt
     ./sharebox.py test/remote/mnt -o gitdir=test/remote/git
 
-5) We still need to set the git directories as remotes of each another
+5) We still need to set the git directories as remotes.
 
     cd test/remote/git
     git remote add local ../../local/git
@@ -48,16 +49,16 @@ will manage this directory for us.
     git remote add remote ../../remote/git
     cd ../../..
 
-6) It is now time for testing! Let us create a file
+6) It is now time for testing! Let us create a file.
 
     echo test > test/local/mnt/foo
 
-7) There is nothing on the remote
+7) There is nothing on the remote.
 
     ls test/remote/mnt
 
-8) We will now tell the remote filesystem to synchronize (this typically
-goes in a crontab)
+8) We will now tell the remote filesystem to synchronize. (This typically
+goes in a crontab.)
 
     ./sharebox.py --command sync test/remote/mnt
 
@@ -75,10 +76,10 @@ see a file named foo, but its size appears to be 0.
     cat test/remote/mnt/foo
      test
 
-10) We are done. We can unmount the two directories
+10) We are done. We can unmount the two directories.
 
-fusermount -u test/local/mnt
-fusermount -u test/remote/mnt
+    fusermount -u test/local/mnt
+    fusermount -u test/remote/mnt
 
 == State of the project ==
 
@@ -87,6 +88,7 @@ as a working solution. There are features that are not implemented, and
 there are features that haven't even been decided.
 
 What is not implemented:
+
 - As usual, there is no documentation and very few unit tests
 - Conflicts are not handled yet
 - The number of copies kept for the same file is not setable yet, but it
@@ -97,4 +99,4 @@ What is not implemented:
 
 To debug, mount with the foreground option:
 
-sharebox.py test/local/mnt -o gitdir=test/local/git -o foreground
+    sharebox.py test/local/mnt -o gitdir=test/local/git -o foreground
